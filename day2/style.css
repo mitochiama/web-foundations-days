@@ -1,0 +1,157 @@
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: Arial, Helvetica, sans-serif;
+    line-height: 1.6;
+    color: #222;
+    background-color: #f4f6f8;
+}
+
+header {
+    background-color: #1f3a5f;
+    color: white;
+    text-align: center;
+    padding: 32px 16px;
+}
+
+header h1 {
+    margin: 0 0 8px;
+    font-size: 2.5rem;
+}
+
+header p {
+    margin: 0 0 16px;
+}
+
+nav {
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+}
+
+nav a {
+    color: white;
+    text-decoration: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    transition: background-color 0.3s ease;
+}
+
+
+nav a:hover {
+    background-color: rgba(255, 255, 255, 0.25);
+}
+
+
+main {
+    max-width: 800px;
+    margin: 24px auto;
+    padding: 0 16px;
+}
+
+section {
+    background-color: white;
+    padding: 20px;
+    margin-bottom: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+
+
+.features {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px;
+}
+
+.features li {
+    background-color: #eef3f9;
+    border: 1px solid #d5dfeb;
+    border-radius: 8px;
+    padding: 16px;
+    text-align: center;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th,
+td {
+    border: 1px solid #ccc;
+    padding: 10px 12px;
+    text-align: left;
+}
+
+th {
+    background-color: #1f3a5f;
+    color: white;
+}
+
+
+form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+label {
+    font-weight: bold;
+}
+
+input,
+textarea {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #aaa;
+    border-radius: 4px;
+    font: inherit;
+}
+
+
+button {
+    align-self: flex-start;
+    padding: 10px 20px;
+    background-color: #1f3a5f;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    font: inherit;
+    cursor: pointer;
+    transition: background-color 0.3s ease, transform 0.2s ease;
+}
+
+button:hover {
+    background-color: #2f5a94;
+    transform: translateY(-2px);
+}
+
+footer {
+    text-align: center;
+    padding: 20px 16px;
+    color: #555;
+}
+
+
+@media (max-width: 600px) {
+    header {
+        padding: 16px 12px;
+    }
+
+    header h1 {
+        font-size: 1.6rem;
+    }
+
+    nav {
+        gap: 8px;
+    }
+}
