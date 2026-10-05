@@ -83,44 +83,36 @@ function addNote(text, category) {
   notes.push({ id: newId, text: cleaned, category: category });
   return true;
 }
-// ---------- Tests ----------
 
-// searchNotes
-console.log(searchNotes("JAVASCRIPT")); // [ { id: 4, text: "Revise JavaScript arrays", category: "study" } ]
-console.log(searchNotes("xyz"));        // [] (no matches)
-console.log(searchNotes("the").length); // 2 (notes 2 and 3)
+console.log(searchNotes("JAVASCRIPT")); 
+console.log(searchNotes("xyz"));        
+console.log(searchNotes("the").length); 
 
-// longestNote
-console.log(longestNote()); // { id: 3, text: "Email the project report to Grace", category: "work" }
+console.log(longestNote()); 
 
-// countByCategory
-console.log(countByCategory()); // { personal: 2, study: 2, work: 1 }
+console.log(countByCategory()); 
 
-// getSummary
-console.log(getSummary()); // "5 notes: 2 personal, 1 work, 2 study."
 
-// Edge cases using an empty list and a one-note list
-const savedNotes = notes; // keep the full list safe
+console.log(getSummary()); 
+
+const savedNotes = notes;
 
 notes = [];
-console.log(longestNote());     // null
-console.log(countByCategory()); // {}
-console.log(getSummary());      // "0 notes."
+console.log(longestNote());     
+console.log(countByCategory()); 
+console.log(getSummary());      
 
-notes = [savedNotes[4]]; // only "Call mum"
-console.log(getSummary());      // "1 note: 1 personal."
+notes = [savedNotes[4]]; 
+console.log(getSummary());    
 
-notes = savedNotes; // put the full list back
+notes = savedNotes; 
 
-// isDuplicate
-console.log(isDuplicate("call mum"));        // true (ignores case)
-console.log(isDuplicate("  CALL   Mum  ")); // true (ignores extra spaces)
-console.log(isDuplicate("Walk the dog"));    // false
-
-// addNote
-console.log(addNote("Water the plants", "personal"));     // true
-console.log(addNote("  water   THE plants ", "work"));    // logs "Not added: a note with this text already exists." then false
-console.log(addNote("", "work"));                         // logs "Not added: text must be 1 to 200 characters." then false
-console.log(addNote("a".repeat(201), "work"));            // logs "Not added: text must be 1 to 200 characters." then false
-console.log(addNote("Plan the budget", "hobby"));         // logs "Not added: category must be personal, work or study." then false
-console.log(getSummary()); // "6 notes: 3 personal, 1 work, 2 study."
+console.log(isDuplicate("call mum"));        
+console.log(isDuplicate("  CALL   Mum  ")); 
+console.log(isDuplicate("Walk the dog"));    
+console.log(addNote("Water the plants", "personal"));     
+console.log(addNote("  water   THE plants ", "work"));    
+console.log(addNote("", "work"));                         
+console.log(addNote("a".repeat(201), "work"));            
+console.log(addNote("Plan the budget", "hobby"));         
+console.log(getSummary()); 
