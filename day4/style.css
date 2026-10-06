@@ -1,0 +1,94 @@
+:root {
+    --bg: #f4f6f8;
+    --card-bg: #ffffff;
+    --text: #222222;
+    --border: #b8c2cc;
+    --accent: #1f3a5f;
+    --accent-hover: #2f5a94;
+    --accent-text: #ffffff;
+    --warning: #e67300;
+    --danger: #c62828;
+}
+
+body.dark {
+    --bg: #121820;
+    --card-bg: #1e2733;
+    --text: #e8edf2;
+    --border: #3b4856;
+    --accent: #4f8fdc;
+    --accent-hover: #6aa5ec;
+    --accent-text: #0d1117;
+    --warning: #ffa23a;
+    --danger: #ff6b6b;
+}
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: Arial, Helvetica, sans-serif;
+    line-height: 1.6;
+    background-color: var(--bg);
+    color: var(--text);
+    transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+main {
+    max-width: 600px;
+    margin: 32px auto;
+    padding: 24px;
+    background-color: var(--card-bg);
+    border-radius: 8px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+label {
+    display: block;
+    font-weight: bold;
+    margin-bottom: 8px;
+}
+
+textarea {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background-color: var(--card-bg);
+    color: var(--text);
+    font: inherit;
+    resize: vertical;
+}
+
+.actions {
+    display: flex;
+    gap: 12px;
+}
+
+button {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 4px;
+    background-color: var(--accent);
+    color: var(--accent-text);
+    font: inherit;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+button:hover {
+    background-color: var(--accent-hover);
+}
+
+/* Character counter states. .over comes last so it wins when both apply */
+.warning {
+    color: var(--warning);
+}
+
+.over {
+    color: var(--danger);
+    font-weight: bold;
+}

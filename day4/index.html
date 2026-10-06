@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Note Counter</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Note Counter</h1>
+
+      <label for="note-text">Your note</label>
+      <textarea
+        id="note-text"
+        rows="6"
+        placeholder="Start typing..."
+      ></textarea>
+
+      <p id="char-count">0 / 200 characters</p>
+      <p id="word-count">0 words</p>
+
+      <div class="actions">
+        <button type="button" id="clear-btn">Clear</button>
+        <button type="button" id="theme-toggle">Dark mode</button>
+      </div>
+    </main>
+    <script src="script.js" defer></script>
+  </body>
+</html>
