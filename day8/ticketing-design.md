@@ -1,8 +1,8 @@
 # TicketHub: Event Ticketing System Design
 
-Status: working draft. Stages 1–3 cover requirements, estimates, API, data,
-and booking transactions. Architecture and alternatives follow. Nothing here
-has been deployed or load-tested.
+Status: complete design proposal for the assignment. Capacity and recovery
+figures are acceptance targets, not measured results. No TicketHub service
+has been implemented, deployed, or load-tested.
 
 ## 1. Context
 
@@ -301,7 +301,7 @@ Support records implement the retry, payment, and queue promises in the API:
 | `payment_events`     | PK `(provider, event_id)` using TEXT; signed-event payload JSONB; nullable `operation_id BIGINT FK payment_operations`; processing state TEXT; retry/lease timestamps TIMESTAMPTZ. Record before acknowledging; unmatched receipts are reconciled before effects are applied.                                                                          |
 | `queue_entries`      | `id BIGINT PK`; user/event FKs; `sequence BIGINT`; status TEXT; nullable admission expiry TIMESTAMPTZ and `order_id BIGINT FK orders`. UNIQUE `(event_id, sequence)` and one active entry per user/event across `WAITING`, `ADMITTED`, and `CONSUMED`; close a consumed entry when its order finishes.                                                 |
 
-The architecture will define queue sequencing and recovery. Payment workers
+Section 4.10 defines queue sequencing and recovery. Payment workers
 can rediscover pending work from durable operation/event records if a broker
 notification is lost; the broker alone is not the record of a required refund.
 Workers claim work with short, expiring leases and recover abandoned claims.
@@ -407,7 +407,9 @@ For initial or additional holds:
 4. Insert a new order only if at least one seat is available, or update the
    existing editable order. Write the available subset using free allowance
    numbers, snapshot prices, recompute the total, and increment the selection
-   version when it changes. Keep the original deadline on additions.
+   version when it changes. Re-adding a previously removed seat reactivates
+   its RELEASED item instead of violating `UNIQUE(order_id, seat_id)` with a
+   second row. Keep the original deadline on additions.
 5. Store the retry result and commit before returning success. A business
    conflict can return a partial hold; a real database failure rolls back the
    transaction. If the response is lost after commit, retrying the same key
@@ -443,34 +445,224 @@ Database references: [row locking](https://www.postgresql.org/docs/18/explicit-l
 [constraints](https://www.postgresql.org/docs/18/ddl-constraints.html), and
 [clock semantics](https://www.postgresql.org/docs/18/functions-datetime.html).
 
-### 4.9 Remaining design work
-
-Draw the architecture, account for waiting-room/polling traffic, and explain
-how admission control, cache, database failover, and workers survive the sale.
-Then finish the alternatives and risks and write the separate reflection.
-
 API references: [HTTP semantics](https://www.rfc-editor.org/rfc/rfc9110.html),
 [provider idempotency example](https://docs.stripe.com/api/idempotent_requests),
 and [signed/duplicate webhook handling](https://docs.stripe.com/webhooks).
 Stripe illustrates these integration patterns; provider selection is not final.
 
+### 4.9 Architecture
+
+Start with one application codebase deployed on multiple servers, one primary
+relational database, and independently scaled waiting-room and worker processes.
+Two million registered accounts alone do not justify database sharding or many
+microservices. Load tests must include the concentrated sale, not just daily averages.
+
+```mermaid
+flowchart TD
+    Buyer["Buyer browser"] --> DNS["DNS"]
+    DNS --> Edge["CDN and edge protection"]
+    Edge --> Origin["Static asset origin"]
+    Edge --> LB["Load balancer"]
+    Buyer --> Identity["Identity provider"]
+    LB --> Waiting["Waiting room and admission"]
+    LB --> AppA["App server A, zone A"]
+    LB --> AppB["App server B, zone B"]
+    Waiting --> Cache["Replicated cache"]
+    Waiting --> Primary["PostgreSQL primary"]
+    AppA --> Cache
+    AppB --> Cache
+    AppA --> Primary
+    AppB --> Primary
+    AppA --> Jobs["Durable job broker"]
+    AppB --> Jobs
+    Jobs --> Workers["Worker pool"]
+    Workers --> Primary
+    Primary --> Standbys["Two standby databases, other zones"]
+    Primary --> Backups["Encrypted backups and WAL archive"]
+    Workers --> Provider["Hosted payment provider"]
+    Buyer --> Provider
+    Provider -->|Signed webhook| LB
+```
+
+DNS resolves a hostname; browsers then connect to the edge. Diagram arrows
+show communication/dependencies, not a single sequential request. A zone is
+an independently powered part of a cloud region. WAL is the database's
+write-ahead log, used for replication and recovery.
+
+| Component                  | Problem it solves                                                                                                                                                    |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Buyer browser              | Displays events, exact held seats, price, expiry and queue status; confirms the final selection before opening hosted payment.                                       |
+| DNS                        | Resolves TicketHub to the edge using a redundant managed DNS service.                                                                                                |
+| CDN and edge protection    | Caches public assets/catalogue responses near buyers and rejects abusive traffic before it consumes application capacity.                                            |
+| Static asset origin        | Stores the versioned HTML, CSS, JavaScript and images from which the CDN fills its cache.                                                                            |
+| Identity provider          | Signs access tokens; servers verify issuer, audience, signature and expiry rather than trusting a client-supplied user ID.                                           |
+| Load balancer              | Routes healthy API/waiting-room traffic across instances and removes failed instances; it does not allocate seats.                                                   |
+| Waiting room and admission | Assigns durable FIFO positions and admits a bounded number of accounts to checkout. Replicated processes use one fenced sequencing leader per event.                 |
+| App servers A/B            | Run the same stateless API across zones, enforcing authentication, ownership, validation and the transaction protocol in section 4.8.                                |
+| Replicated cache           | Serves short-lived public availability and owner-scoped queue-status snapshots without querying booking tables on every refresh.                                     |
+| PostgreSQL primary         | Authoritatively stores users, inventory, allocations, orders, queue positions and durable payment work; transactions and constraints protect correctness.            |
+| Two standby databases      | Keep replicated copies in other zones so a managed failover controller can replace a failed primary without discarding acknowledged bookings.                        |
+| Durable job broker         | Distributes payment, reconciliation and notification work and absorbs temporary worker slowdowns; it is separate from the buyer waiting room.                        |
+| Worker pool                | Processes durable payment records, releases expired holds, reconciles uncertain payments, retries refunds and sends notifications without blocking browser requests. |
+| Hosted payment provider    | Collects card details, performs payment operations and sends signed results; TicketHub stores references rather than card data.                                      |
+| Backups and WAL archive    | Allow point-in-time restoration after accidental deletion or corruption, which replication alone would also copy.                                                    |
+
+### 4.10 Controlling the sale traffic
+
+An account joins once per event. The waiting-room leader assigns a monotonic
+sequence and commits the queue entry before acknowledging its position.
+Batching consecutive entries reduces commit overhead. A standby leader resumes
+from committed state; a lease and fencing prevent an old leader assigning
+positions concurrently. Database uniqueness also rejects duplicate active entries.
+An acknowledged position survives cache/leader loss. FIFO refers to this
+server-issued sequence, not an unverifiable ordering of clicks worldwide.
+
+Queue-status handlers verify identity and return only that owner's internally
+cached snapshot. These private HTTP responses are not cached in a shared CDN.
+Publish snapshots in batches; an approximate position is not admission.
+The primary database records admission before issuing a signed, account/event
+token valid for 60 seconds. Initial hold creation consumes that admission in
+the same transaction as the order; replay cannot create a second order.
+Close the consumed queue entry when its order finishes. Unused admission
+expiry returns its permit and closes that entry; rejoining goes to the back.
+Editing an existing valid hold keeps the original five-minute deadline.
+
+Start with at most 2,000 outstanding admissions/active checkout orders for an
+event, and a maximum of 100 buyer booking mutations/second. These are provisional
+control settings, not demonstrated capacity. Count outstanding tokens until
+consumed/expired and orders until completed/expired, without counting a consumed
+token twice. Reconcile permits from durable records after controller failure.
+With four seats per hold, 2,000 active orders could tie up at most 8,000 seats.
+Reserve separate capacity for payment confirmations and expiry work; reduce
+admission when database latency, lock waits or payment backlog rise. Waiting-room
+and booking limits do not guarantee every seat sells within ten minutes.
+
+| Traffic class            | Initial burst budget and treatment                                                                                                                                                                                                                                                                                          |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Public pages/assets      | 10,000 page views/second. Assuming three public HTTP requests/view gives 30,000 edge requests/second. A proposed 95% edge hit rate leaves 1,500 origin requests/second, not 1,500 database queries: shared caching/coalesced fills protect the database further.                                                            |
+| New waiting-room entries | Up to 1,000/second; these are real durable writes on the primary, even though checkout is gated. Benchmark batched inserts, retry receipts and sequencing together with booking work.                                                                                                                                       |
+| Queue status             | 200,000 / 30 = about 6,667 requests/second if everyone polls every 30 seconds. Use cached owner-scoped snapshots, 30-second intervals, jitter and backoff; do not perform a booking-table query per poll.                                                                                                                   |
+| Checkout and payment     | Gate buyer mutations initially at 100/second; reserve and test an additional 100 internal booking transactions/second for confirmations/expiry/reconciliation. A ten-minute sellout requires 8.33–33.33 successful orders/second, with unsuccessful attempts adding work. Provider latency and quotas need their own tests. |
+
+The three-requests/view and 95% hit rate figures are explicit assumptions.
+Payment webhooks, order polling, cache fills and retries must also appear in
+load tests. Order polling backs off, while authoritative order reads still
+use the primary and private responses remain `no-store`. Use bounded
+queues, timeouts and `429`/`503` with retry guidance rather than unlimited
+in-memory requests. If measured capacity is below offered queue-join demand,
+throttle joins at the edge while retaining already acknowledged positions;
+do not acknowledge a position that exists only in memory.
+
+### 4.11 End-to-end request flows
+
+**Browse and join:** The browser obtains public assets through DNS/CDN.
+`GET /events` and seat browsing use brief public caches; cache misses reach
+an app and then a shared cache or the primary. The buyer signs in before
+joining the sale queue. The waiting room authenticates, durably reuses/creates
+the queue entry and returns its owned status URL. Refreshing preserves the
+entry; only the admission controller grants checkout access.
+
+**Hold, replace and pay:** An admitted `POST /orders` reaches an app, which
+authenticates, checks the admission/key/input and runs the primary transaction.
+Its committed response lists the exact held/unavailable seats. Adding a
+replacement uses the same order and expiry. After explicit buyer confirmation,
+`POST /orders/{order_id}/payments` freezes the selection and commits durable
+payment work before returning `202`. A worker creates/resumes hosted payment
+outside database locks; the owner retrieves its checkout URL. Provider webhooks
+are durably received before acknowledgement, then processed idempotently.
+Only a committed PAID order with all its CONFIRMED items produces tickets.
+`GET /me/tickets` checks the authenticated owner and reads the primary, so a
+new purchase does not disappear because a replica is behind. Technical refunds
+follow section 4.4 if payment cannot produce the complete confirmed selection.
+
+### 4.12 Cache, durable work and failure recovery
+
+Cache public event metadata for at most 60 seconds and seat availability for
+at most two seconds, labelling availability as indicative. After allocation
+changes, invalidate the affected seat-map entries after commit; a lost
+invalidation is bounded by the short TTL. Coalesce simultaneous cache fills
+for the same key. Never cache permission to book or use a cached quota as
+authority. Cache loss causes controlled rebuilding and slower admission,
+not unrestricted fallback traffic. Private orders/tickets are owner-checked
+on the primary; cache keys for queue snapshots include user and event IDs.
+
+Replicas can lag. Keep all booking decisions and immediate purchase reads on
+the primary; standbys initially serve recovery, not customer ownership reads.
+Configure `fsync = on`, `synchronous_commit = on` and a synchronous-standby
+policy: the primary waits for at least one standby to flush WAL before
+acknowledging a booking. Two candidate standbys
+across three zones allow another synchronous copy after a single-zone loss.
+A managed HA controller uses quorum and fencing to stop the old writer,
+promotes a survivor containing all acknowledged commits, and changes the
+writer endpoint. Applications reconnect and retry with their original keys.
+Pause writes if a safe writer or synchronous copy cannot be established;
+never promote a lagging copy merely to return success. Test the proposed
+60-second recovery target. Regional loss is outside this zero-loss promise;
+encrypted off-site backups and tested restores address disaster recovery.
+
+DNS, edge, load balancing, cache and broker use redundant managed deployments;
+apps, waiting-room processes and workers span zones with health checks.
+During waiting-room/controller failure, stop new admissions and rebuild from
+durable entries instead of letting buyers bypass the gate. Already held seats
+remain database records. Dependency failure may reduce availability: correctness
+takes priority over admitting purchases whose outcome cannot be verified.
+
+Treat broker delivery as at least once: work may arrive twice. Commit a
+`payment_operations` or `payment_events` record before publishing a wake-up.
+Workers also scan pending database records, so a crash between commit and
+publish, or broker loss, cannot erase payment/refund work. Claim short leases,
+perform provider calls outside database transactions, and use stable provider
+keys plus the state guards already specified. Expired leases allow recovery
+after a worker crashes. Retry with backoff; alert on old pending payments,
+refunds and failed jobs rather than discarding them. Emails may be delayed;
+durable booking and payment verification cannot be delegated to email delivery.
+
+Monitor p95 latency, queue age, admission counts, lock waits, duplicate-allocation
+constraint failures, replication lag and unresolved payment/refund age. Exercise
+simultaneous A3 requests, partial holds, repeated keys, expiry/payment races,
+duplicate webhooks, worker/cache loss and database failover in acceptance tests.
+
+Architecture references: [PostgreSQL synchronous replication](https://www.postgresql.org/docs/18/warm-standby.html),
+[durable commit settings](https://www.postgresql.org/docs/18/runtime-config-wal.html),
+[HTTP cache rules](https://www.rfc-editor.org/rfc/rfc9111.html), and
+[an at-least-once queue example](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/standard-queues-at-least-once-delivery.html).
+These explain mechanisms; they are not evidence that this proposed system meets its targets.
+
 ## 5. Alternatives considered
 
-To be completed after the API, booking rules, and architecture are chosen.
-Compare at least two meaningful alternatives and explain their costs.
+| Choice                                           | Alternative and reason for the decision                                                                                                                                                                                                                          | Cost accepted                                                                                                                                                                                             |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SQL row locks plus unique constraints            | A cache-only availability check lets two requests both observe a free seat. A distributed cache lock alone also needs careful failure recovery. Keep the final allocation in one transactional database with constraints.                                        | Popular seats serialize competing writers; careful lock ordering, retries and admission control add work. Sharding is deferred until measured capacity requires it.                                       |
+| Partial holds                                    | All-or-nothing group booking is simpler but would release A1/A2 merely because A3 was lost. Preserve available seats as requested, then require explicit confirmation or replacement.                                                                            | Groups may be separated, and selection versions, expiry and UI explanations become more complex. Adjacency is not guaranteed.                                                                             |
+| FIFO waiting room                                | Unrestricted checkout lets the opening crowd overload the database; a lottery would change the chosen fairness rule. Admit by durable server sequence with per-account limits.                                                                                   | Buyers wait, the queue is extra infrastructure, and multiple accounts still undermine fairness. Arrival before the server cannot be perfectly ordered.                                                    |
+| Strict five-minute holds and synchronous storage | Extending holds during payment could improve completion but tie up scarce seats indefinitely. Asynchronous replication reduces write latency but can lose acknowledged bookings during failover. Keep a fixed deadline and synchronous durable acknowledgements. | Late payment confirmation can require a full refund; synchronous writes add latency and may pause during a failure. These policies favour inventory turnover and correctness over uninterrupted checkout. |
+
+The design is deliberately more complex than a small normal-day store because
+the popular sale concentrates demand and payment outcomes cross system boundaries.
+It still avoids separate services/databases for each business entity.
 
 ## 6. Risks and open questions
 
-- The whole crowd may arrive near the opening second; the assumed 3× burst
-  allowance could be too small.
-- Bots and multiple accounts can weaken account-based fairness.
-- A seat map can become stale between viewing a seat and requesting a hold;
-  the booking operation must make the authoritative availability decision.
-- A payment notification can arrive late, twice, or out of order. Implement
-  durable receipt processing and the specified expiry/refund policy correctly.
-- Partial holds can leave separated seats. The buyer must see the exact seats
-  and explicitly accept them; adjacency is not guaranteed by a group order.
-- Four tickets per account/event cannot stop one person operating multiple
-  accounts. Monitor abuse without claiming account limits prove unique people.
-- Confirm payment-provider capabilities and define recovery when a payment's
-  outcome is temporarily unknown.
+- **Opening burst and capacity:** All 200,000 people may arrive near the first
+  second; the provisional 3× factor is not a worst case. Validate CDN misses,
+  durable queue-entry throughput, polling, hot-seat contention and failover
+  together. Tune admission and report actual limits before a real launch.
+- **Fairness and abuse:** Four tickets per account is not four per person.
+  Decide appropriate bot controls and account checks without pretending they
+  eliminate multiple-account purchases or unfair network advantages.
+- **Payment policy:** Select a provider supporting hosted collection, stable
+  references, idempotent operations, signed webhooks, reconciliation and refunds.
+  Confirm key-retention windows and cancellation capabilities. TicketHub's
+  five-minute deadline applies even if a provider page can stay open longer;
+  attempt cancellation on expiry and refund any late capture. Communicate that
+  a payment made near expiry may be refunded if confirmation arrives too late.
+- **Group experience:** A partial hold may leave non-adjacent seats. Show the
+  exact seats, original deadline and changed total clearly; never silently
+  substitute a seat or charge for a reduced selection.
+- **Recovery scope:** Define regional-disaster recovery time/data-loss targets,
+  backup retention and restore drills. The single-zone zero-loss target is
+  conditional on the specified synchronous configuration and safe promotion.
+- **Privacy and operations:** Decide account/payment-record retention, event
+  cancellation handling and support procedures before production. Redact
+  access/admission tokens and payment data from logs. These policies and actual
+  operational tests remain work for the implementation team.
